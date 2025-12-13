@@ -174,8 +174,8 @@ function draw(){ ctx.clearRect(0,0,W,H);
   // ball
   const g = ctx.createRadialGradient(ball.x-3,ball.y-3,2,ball.x,ball.y,ball.radius*2); g.addColorStop(0,'#fff'); g.addColorStop(1,'#ff2f77'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ball.x,ball.y,ball.radius,0,Math.PI*2); ctx.fill();
   ctx.globalAlpha = 0.12; ctx.fillStyle = '#ff2f77'; ctx.beginPath(); ctx.arc(ball.x,ball.y,ball.radius*4,0,Math.PI*2); ctx.fill(); ctx.globalAlpha = 1;
-  // bricks
-  bricks.forEach(b=>{ if(!b.hit) drawRect(b.x,b.y,b.width,b.height,'#ff1493'); });
+  // bricks (now blue)
+  bricks.forEach(b=>{ if(!b.hit) drawRect(b.x,b.y,b.width,b.height,'#4da6ff'); });
   // HUD
   ctx.fillStyle = '#fff'; ctx.font = '16px Arial'; ctx.fillText('Score: '+score, 10, 20); ctx.fillText('Lives: '+lives, W-90, 20);
 }
