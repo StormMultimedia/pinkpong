@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pura Power Pink Pong MVP</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+:root{--pink:#ff69b4;--hot:#ff1493;--bg:#111;--canvas-bg:#222}
+body{margin:0;background:var(--bg);display:flex;justify-content:center;align-items:center;height:100vh}
+.wrapper{position:relative}
+canvas{background:var(--canvas-bg);border:2px solid var(--pink);border-radius:6px}
+.topbar{position:absolute;left:12px;top:10px;color:#ddd;font-size:14px;z-index:20}
+</style>
+</head>
+
+<body>
+<div class="wrapper">
+  <div class="topbar">Pink Pong MVP</div>
+  <canvas id="gameCanvas" width="600" height="400"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+/* ------------------ GAME STATE ------------------ */
+let score=0,lives=3,brickHitsThisLife=0;
+let balls=[];
+let particles=[];
+
+/* ------------------ OBJECTS ------------------ */
+const paddle={x:250,y:360,w:120,h:22,speed:6};
+const leftFlipper={x:14,y:170,w:16,h:80};
+const rightFlipper={x:570,y:170,w:16,h:80};
+
+const bricks=[];
+for(let r=0;r<4;r++){
+  for(let c=0;c<8;c++){
+    bricks.push({x:40+c*65,y:40+r*26,w:60,h:20,hit:false});
+  }
+}
+
+/* ------------------ BALL / VINYL ------------------ */
+function spawnBall(x,y,dx,dy){
+  balls.push({x,y,r:9,dx,dy,rot:0});
+}
+spawnBall(W/2,H/2,3,-3);
+
+/* ------------------ DRAW HELPERS ------------------ */
+function drawVinyl(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.rotate(b.rot);
+  ctx.fillStyle="#000";
+  ctx.beginPath();ctx.arc(0,0,b.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#fff";
+  ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawDJBooth(){
+  ctx.fillStyle="#111";
+  ctx.fillRect(paddle.x,paddle.y,paddle.w,paddle.h);
+  // turntables
+  ctx.fillStyle="#333";
+  ctx.beginPath();ctx.arc(paddle.x+25,paddle.y+11,8,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(paddle.x+paddle.w-25,paddle.y+11,8,0,Math.PI*2);ctx.fill();
+  // mixer
+  ctx.fillStyle="#ff69b4";
+  ctx.fillRect(paddle.x+paddle.w/2-6,paddle.y+4,12,14);
+}
+
+function drawLeg(flipper,left=true){
+  ctx.fillStyle="#ff3f8a";
+  ctx.fillRect(flipper.x,flipper.y,flipper.w,flipper.h);
+  ctx.fillStyle="#000";
+  if(left){
+    ctx.beginPath();
+    ctx.moveTo(flipper.x+flipper.w,flipper.y+flipper.h-8);
+    ctx.lineTo(flipper.x+flipper.w+8,flipper.y+flipper.h);
+    ctx.lineTo(flipper.x+flipper.w,flipper.y+flipper.h);
+    ctx.fill();
+  }else{
+    ctx.beginPath();
+    ctx.moveTo(flipper.x,flipper.y+flipper.h-8);
+    ctx.lineTo(flipper.x-8,flipper.y+flipper.h);
+    ctx.lineTo(flipper.x,flipper.y+flipper.h);
+    ctx.fill();
+  }
+}
+
+function spawnParticles(x,y){
+  for(let i=0;i<12;i++){
+    particles.push({
+      x,y,
+      dx:(Math.random()-0.5)*4,
+      dy:(Math.random()-0.5)*4,
+      life:20
+    });
+  }
+}
+
+/* ------------------ UPDATE ------------------ */
+function update(){
+  balls.forEach(b=>{
+    b.x+=b.dx; b.y+=b.dy; b.rot+=0.15;
+
+    if(b.x<b.r||b.x>W-b.r) b.dx*=-1;
+    if(b.y<b.r) b.dy*=-1;
+
+    if(b.y>H){
+      lives--;
+      brickHitsThisLife=0;
+      balls=[ ];
+      spawnBall(W/2,H/2,3,-3);
+    }
+
+    if(b.y+b.r>paddle.y && b.x>paddle.x && b.x<paddle.x+paddle.w){
+      b.dy=-Math.abs(b.dy);
+    }
+
+    [leftFlipper,rightFlipper].forEach(f=>{
+      if(b.x>b.r+f.x && b.x<f.x+f.w && b.y>f.y && b.y<f.y+f.h){
+        b.dx*=-1;
+      }
+    });
+
+    bricks.forEach(br=>{
+      if(!br.hit && b.x>br.x && b.x<br.x+br.w && b.y>br.y && b.y<br.y+br.h){
+        br.hit=true;
+        b.dy*=-1;
+        score+=10;
+        brickHitsThisLife++;
+        spawnParticles(b.x,b.y);
+
+        if(brickHitsThisLife===3){
+          spawnBall(b.x,b.y,3,-3);
+          spawnBall(b.x,b.y,-3,-3);
+        }
+      }
+    });
+  });
+
+  particles=particles.filter(p=>p.life-->0);
+  particles.forEach(p=>{p.x+=p.dx;p.y+=p.dy});
+}
+
+/* ------------------ DRAW ------------------ */
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  bricks.forEach(b=>{
+    if(!b.hit){
+      ctx.fillStyle="#4da6ff";
+      ctx.fillRect(b.x,b.y,b.w,b.h);
+    }
+  });
+
+  drawDJBooth();
+  drawLeg(leftFlipper,true);
+  drawLeg(rightFlipper,false);
+
+  balls.forEach(drawVinyl);
+
+  particles.forEach(p=>{
+    ctx.fillStyle="rgba(255,105,180,0.7)";
+    ctx.fillRect(p.x,p.y,3,3);
+  });
+
+  ctx.fillStyle="#fff";
+  ctx.fillText(`Score ${score}`,10,18);
+  ctx.fillText(`Lives ${lives}`,W-80,18);
+}
+
+/* ------------------ LOOP ------------------ */
+function loop(){update();draw();requestAnimationFrame(loop)}
+loop();
+</script>
+</body>
+</html>
