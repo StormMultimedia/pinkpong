@@ -5,258 +5,177 @@
 <title>Pura Power Pink Pong MVP</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>
-  :root{--pink:#ff69b4;--hot:#ff1493;--bg:#111;--canvas-bg:#222}
-  body { margin:0; background:var(--bg); display:flex; justify-content:center; align-items:center; height:100vh; touch-action:manipulation; }
-  .wrapper{position:relative}
-  canvas { background:var(--canvas-bg); display:block; border: 2px solid var(--pink); border-radius:6px; }
-
-  /* Touch controls */
-  #touchControls{position:absolute; left:50%; transform:translateX(-50%); bottom:14px; display:flex; gap:12px; z-index:20}
-  .touchBtn{width:76px; height:52px; border-radius:10px; border:none; background:rgba(255,105,180,0.15); color:var(--pink); font-size:20px; font-weight:700; display:flex; align-items:center; justify-content:center; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);}
-  .touchBtn.active{background:rgba(255,20,147,0.18); transform:scale(0.98)}
-
-  /* Single action flipper button */
-  #actionBtn{position:absolute; right:12px; bottom:18px; width:84px; height:64px; border-radius:12px; border:none; background:rgba(77,166,255,0.12); color:#4da6ff; font-size:18px; font-weight:800; z-index:20}
-  #actionBtn.active{transform:scale(0.98); background:rgba(77,166,255,0.18)}
-
-  /* Top bar */
-  .topbar{position:absolute; left:12px; top:10px; color:#ddd; font-size:14px; z-index:20; display:flex; gap:10px; align-items:center}
-  .mute{background:transparent;border:1px solid rgba(255,255,255,0.08);color:#ddd;padding:6px 10px;border-radius:8px;cursor:pointer}
-
-  @media (max-width:480px){ .touchBtn{width:92px;height:60px;font-size:26px} #actionBtn{width:96px;height:70px;font-size:20px} }
+:root{--pink:#ff69b4;--hot:#ff1493;--bg:#111;--canvas-bg:#222}
+body{margin:0;background:var(--bg);display:flex;justify-content:center;align-items:center;height:100vh}
+.wrapper{position:relative}
+canvas{background:var(--canvas-bg);border:2px solid var(--pink);border-radius:6px}
+.topbar{position:absolute;left:12px;top:10px;color:#ddd;font-size:14px;z-index:20}
 </style>
 </head>
+
 <body>
 <div class="wrapper">
-  <div class="topbar">
-    <div>Pink Pong MVP</div>
-    <button id="muteBtn" class="mute">🔊</button>
-  </div>
+  <div class="topbar">Pink Pong MVP</div>
   <canvas id="gameCanvas" width="600" height="400"></canvas>
-  <div id="touchControls">
-    <button id="leftBtn" class="touchBtn" aria-label="Move left">◀</button>
-    <button id="rightBtn" class="touchBtn" aria-label="Move right">▶</button>
-  </div>
-  <button id="actionBtn" aria-label="Flipper Action">FLIP</button>
 </div>
 
 <script>
-// Responsive canvas + devicePixelRatio handling
-const baseW = 600, baseH = 400; // logical starting sizes
-let W = baseW, H = baseH;
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
 
-function resizeCanvas() {
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  const maxWidth = Math.min(window.innerWidth - 24, 1000);
-  const newW = Math.max(320, Math.min(maxWidth, baseW));
-  const aspect = baseH / baseW;
-  const newH = Math.round(newW * aspect);
-  const prevW = W, prevH = H;
-  const scaleX = newW / prevW, scaleY = newH / prevH;
-  scaleGameObjects(scaleX, scaleY);
-  W = newW; H = newH;
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
-  canvas.width = Math.round(W * dpr);
-  canvas.height = Math.round(H * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
+/* ------------------ GAME STATE ------------------ */
+let score=0,lives=3,brickHitsThisLife=0;
+let balls=[];
+let particles=[];
 
-function scaleGameObjects(sx, sy){
-  paddle.x *= sx; paddle.y *= sy; paddle.width *= sx; paddle.height *= sy; paddle.speed *= Math.max(sx,sy);
-  leftFlipper.x *= sx; leftFlipper.y *= sy; leftFlipper.width *= sx; leftFlipper.height *= sy; leftFlipper.speed *= Math.max(sx,sy);
-  rightFlipper.x *= sx; rightFlipper.y *= sy; rightFlipper.width *= sx; rightFlipper.height *= sy; rightFlipper.speed *= Math.max(sx,sy);
-  ball.x *= sx; ball.y *= sy; ball.radius *= Math.max(sx,sy);
-  bricks.forEach(b=>{ b.x *= sx; b.y *= sy; b.width *= sx; b.height *= sy; });
-}
+/* ------------------ OBJECTS ------------------ */
+const paddle={x:250,y:360,w:120,h:22,speed:6};
+const leftFlipper={x:14,y:170,w:16,h:80};
+const rightFlipper={x:570,y:170,w:16,h:80};
 
-// Game objects
-const paddle = { x: 250, y: 370, width: 100, height: 15, speed: 5 };
-const leftFlipper = { x: 10, y: 180, width: 10, height: 60, speed: 5 };
-const rightFlipper = { x: 580, y: 180, width: 10, height: 60, speed: 5 };
-const ball = { x: 300, y: 200, radius: 10, speedX: 3, speedY: -3 };
-
-let bricks = [];
-let brickRows = 4, brickCols = 8;
-let brickWidth = 60, brickHeight = 20, brickPadding = 5;
-let score = 0, lives = 3;
-let keys = {};
-
-function createBricks(){
-  bricks = [];
-  for(let r=0;r<brickRows;r++){
-    for(let c=0;c<brickCols;c++){
-      const x = c*(brickWidth+brickPadding)+35;
-      const y = r*(brickHeight+brickPadding)+30;
-      bricks.push({ x, y, width:brickWidth, height:brickHeight, hit:false });
-    }
+const bricks=[];
+for(let r=0;r<4;r++){
+  for(let c=0;c<8;c++){
+    bricks.push({x:40+c*65,y:40+r*26,w:60,h:20,hit:false});
   }
 }
-createBricks();
 
-// Audio
-let audioCtx = null; let muted = false;
-function ensureAudio(){ if(audioCtx) return; try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ audioCtx = null; } }
-function playBeep(freq=440, time=0.06, type='sine', gain=0.15){ if(muted) return; ensureAudio(); if(!audioCtx) return; const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type = type; o.frequency.value = freq; g.gain.value = gain; o.connect(g); g.connect(audioCtx.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + time); o.stop(audioCtx.currentTime + time + 0.02); }
-function playNoise(time=0.08, gain=0.15){ if(muted) return; ensureAudio(); if(!audioCtx) return; const bufferSize = audioCtx.sampleRate * time; const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate); const data = buffer.getChannelData(0); for(let i=0;i<bufferSize;i++){ data[i] = (Math.random()*2-1) * (1 - i/bufferSize); }
-  const src = audioCtx.createBufferSource(); src.buffer = buffer; const g = audioCtx.createGain(); g.gain.value = gain; src.connect(g); g.connect(audioCtx.destination); src.start(); }
-
-// Controls
-document.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
-document.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
-
-const leftBtn = document.getElementById('leftBtn');
-const rightBtn = document.getElementById('rightBtn');
-const actionBtn = document.getElementById('actionBtn');
-const muteBtn = document.getElementById('muteBtn');
-
-let moveLeft = false, moveRight = false, dragging = false, actionActive = false;
-
-function pressLeft(){ moveLeft = true; leftBtn.classList.add('active'); }
-function releaseLeft(){ moveLeft = false; leftBtn.classList.remove('active'); }
-function pressRight(){ moveRight = true; rightBtn.classList.add('active'); }
-function releaseRight(){ moveRight = false; rightBtn.classList.remove('active'); }
-
-leftBtn.addEventListener('pointerdown', e=>{ e.preventDefault(); pressLeft(); });
-leftBtn.addEventListener('pointerup', e=>{ e.preventDefault(); releaseLeft(); });
-leftBtn.addEventListener('pointercancel', releaseLeft);
-rightBtn.addEventListener('pointerdown', e=>{ e.preventDefault(); pressRight(); });
-rightBtn.addEventListener('pointerup', e=>{ e.preventDefault(); releaseRight(); });
-rightBtn.addEventListener('pointercancel', releaseRight);
-
-// Single action button (flippers act like pinball)
-function pressAction(){ if(actionActive) return; actionActive = true; actionBtn.classList.add('active'); // thrust flippers inward/up
-  leftFlipper.x += 20; leftFlipper.y -= 12; rightFlipper.x -= 20; rightFlipper.y -= 12; playBeep(880,0.06,'square',0.12);
-  // auto-release after short time
-  setTimeout(releaseAction, 160);
+/* ------------------ BALL / VINYL ------------------ */
+function spawnBall(x,y,dx,dy){
+  balls.push({x,y,r:9,dx,dy,rot:0});
 }
-function releaseAction(){ if(!actionActive) return; actionActive = false; actionBtn.classList.remove('active'); leftFlipper.x -= 20; leftFlipper.y += 12; rightFlipper.x += 20; rightFlipper.y += 12; }
+spawnBall(W/2,H/2,3,-3);
 
-actionBtn.addEventListener('pointerdown', e=>{ e.preventDefault(); pressAction(); });
-actionBtn.addEventListener('pointerup', e=>{ e.preventDefault(); releaseAction(); });
-window.addEventListener('pointerup', ()=>{ /* ensure release */ releaseAction(); });
-
-// keyboard mapping: space or 'f' triggers action
-document.addEventListener('keydown', (e)=>{ if(e.code === 'Space' || e.key.toLowerCase()==='f'){ pressAction(); } });
-document.addEventListener('keyup', (e)=>{ if(e.code === 'Space' || e.key.toLowerCase()==='f'){ releaseAction(); } });
-
-muteBtn.addEventListener('click', ()=>{ muted = !muted; muteBtn.textContent = muted ? '🔇' : '🔊'; if(!muted) ensureAudio(); });
-
-// drag-to-move
-canvas.addEventListener('pointerdown', e=>{ dragging = true; canvas.setPointerCapture(e.pointerId); handlePointer(e); });
-canvas.addEventListener('pointermove', e=>{ if(dragging) handlePointer(e); });
-canvas.addEventListener('pointerup', e=>{ dragging = false; try{ canvas.releasePointerCapture(e.pointerId); }catch(_){ } });
-canvas.addEventListener('pointercancel', ()=> dragging = false);
-function handlePointer(e){ const rect = canvas.getBoundingClientRect(); const x = (e.clientX - rect.left) * (W/rect.width); paddle.x = Math.max(0, Math.min(W - paddle.width, x - paddle.width/2)); }
-
-['touchstart','touchmove'].forEach(ev => {
-  canvas.addEventListener(ev, e=>e.preventDefault(), {passive:false});
-  leftBtn.addEventListener(ev, e=>e.preventDefault(), {passive:false});
-  rightBtn.addEventListener(ev, e=>e.preventDefault(), {passive:false});
-});
-
-// Drawing helpers
-function drawRect(x,y,w,h,color){ ctx.fillStyle = color; ctx.fillRect(x,y,w,h); }
-function drawRoundedRect(x,y,w,h,r,color){ ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.fill(); }
-
-function draw(){ ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = '#ffd9e9'; for(let i=10;i<H;i+=28) ctx.fillRect(W/2-3,i,6,16);
-  drawRoundedRect(paddle.x,paddle.y,paddle.width,paddle.height,6,'#ff69b4');
-  drawRect(leftFlipper.x,leftFlipper.y,leftFlipper.width,leftFlipper.height,'#ff1493');
-  drawRect(rightFlipper.x,rightFlipper.y,rightFlipper.width,rightFlipper.height,'#ff3f8a');
-  const g = ctx.createRadialGradient(ball.x-3,ball.y-3,2,ball.x,ball.y,ball.radius*2); g.addColorStop(0,'#fff'); g.addColorStop(1,'#ff2f77'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ball.x,ball.y,ball.radius,0,Math.PI*2); ctx.fill();
-  ctx.globalAlpha = 0.12; ctx.fillStyle = '#ff2f77'; ctx.beginPath(); ctx.arc(ball.x,ball.y,ball.radius*4,0,Math.PI*2); ctx.fill(); ctx.globalAlpha = 1;
-  bricks.forEach(b=>{ if(!b.hit) drawRect(b.x,b.y,b.width,b.height,'#4da6ff'); });
-  ctx.fillStyle = '#fff'; ctx.font = '16px Arial'; ctx.fillText('Score: '+score, 10, 20); ctx.fillText('Lives: '+lives, W-90, 20);
+/* ------------------ DRAW HELPERS ------------------ */
+function drawVinyl(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.rotate(b.rot);
+  ctx.fillStyle="#000";
+  ctx.beginPath();ctx.arc(0,0,b.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#fff";
+  ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
+  ctx.restore();
 }
 
-// Collision utilities
-function rectContains(r,x,y){ return x>r.x && x<r.x+r.width && y>r.y && y<r.y+r.height; }
+function drawDJBooth(){
+  ctx.fillStyle="#111";
+  ctx.fillRect(paddle.x,paddle.y,paddle.w,paddle.h);
+  // turntables
+  ctx.fillStyle="#333";
+  ctx.beginPath();ctx.arc(paddle.x+25,paddle.y+11,8,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(paddle.x+paddle.w-25,paddle.y+11,8,0,Math.PI*2);ctx.fill();
+  // mixer
+  ctx.fillStyle="#ff69b4";
+  ctx.fillRect(paddle.x+paddle.w/2-6,paddle.y+4,12,14);
+}
 
+function drawLeg(flipper,left=true){
+  ctx.fillStyle="#ff3f8a";
+  ctx.fillRect(flipper.x,flipper.y,flipper.w,flipper.h);
+  ctx.fillStyle="#000";
+  if(left){
+    ctx.beginPath();
+    ctx.moveTo(flipper.x+flipper.w,flipper.y+flipper.h-8);
+    ctx.lineTo(flipper.x+flipper.w+8,flipper.y+flipper.h);
+    ctx.lineTo(flipper.x+flipper.w,flipper.y+flipper.h);
+    ctx.fill();
+  }else{
+    ctx.beginPath();
+    ctx.moveTo(flipper.x,flipper.y+flipper.h-8);
+    ctx.lineTo(flipper.x-8,flipper.y+flipper.h);
+    ctx.lineTo(flipper.x,flipper.y+flipper.h);
+    ctx.fill();
+  }
+}
+
+function spawnParticles(x,y){
+  for(let i=0;i<12;i++){
+    particles.push({
+      x,y,
+      dx:(Math.random()-0.5)*4,
+      dy:(Math.random()-0.5)*4,
+      life:20
+    });
+  }
+}
+
+/* ------------------ UPDATE ------------------ */
 function update(){
-  if(keys['arrowleft'] && paddle.x>0) paddle.x -= paddle.speed;
-  if(keys['arrowright'] && paddle.x + paddle.width < W) paddle.x += paddle.speed;
-  if(moveLeft) paddle.x = Math.max(0, paddle.x - paddle.speed);
-  if(moveRight) paddle.x = Math.min(W - paddle.width, paddle.x + paddle.speed);
-  // flipper keyboard manual movement removed - action button controls flippers
+  balls.forEach(b=>{
+    b.x+=b.dx; b.y+=b.dy; b.rot+=0.15;
 
-  ball.x += ball.speedX; ball.y += ball.speedY;
+    if(b.x<b.r||b.x>W-b.r) b.dx*=-1;
+    if(b.y<b.r) b.dy*=-1;
 
-  // wall collisions
-  if(ball.x + ball.radius > W){ ball.x = W - ball.radius; ball.speedX *= -1; playBeep(480,0.04,'sine',0.08); }
-  if(ball.x - ball.radius < 0){ ball.x = ball.radius; ball.speedX *= -1; playBeep(480,0.04,'sine',0.08); }
-  if(ball.y - ball.radius < 0){ ball.y = ball.radius; ball.speedY *= -1; playBeep(520,0.04,'sine',0.08); }
-  if(ball.y + ball.radius > H){ // miss
-    lives--; playNoise(0.12,0.12);
-    if(lives <= 0){ playBeep(120,0.6,'sawtooth',0.18); setTimeout(resetGame, 200); }
-    else { ball.x = W/2; ball.y = H/2; ball.speedY = -Math.abs(ball.speedY); ball.speedX = (Math.random()>0.5?1:-1)*Math.abs(ball.speedX); }
-  }
+    if(b.y>H){
+      lives--;
+      brickHitsThisLife=0;
+      balls=[ ];
+      spawnBall(W/2,H/2,3,-3);
+    }
 
-  // paddle collision
-  if(ball.y + ball.radius > paddle.y && ball.y - ball.radius < paddle.y + paddle.height && ball.x > paddle.x && ball.x < paddle.x + paddle.width){
-    ball.y = paddle.y - ball.radius; ball.speedY = -Math.abs(ball.speedY);
-    const hitPos = (ball.x - (paddle.x + paddle.width/2)) / (paddle.width/2);
-    ball.speedX = hitPos * 6;
-    playBeep(720,0.04,'square',0.09);
-  }
+    if(b.y+b.r>paddle.y && b.x>paddle.x && b.x<paddle.x+paddle.w){
+      b.dy=-Math.abs(b.dy);
+    }
 
-  // flipper collisions
-  [leftFlipper, rightFlipper].forEach(f=>{
-    if(circleRectCollision(ball, f)){
-      resolveCircleRectCollision(ball, f);
-      playBeep(640,0.04,'triangle',0.08);
+    [leftFlipper,rightFlipper].forEach(f=>{
+      if(b.x>b.r+f.x && b.x<f.x+f.w && b.y>f.y && b.y<f.y+f.h){
+        b.dx*=-1;
+      }
+    });
+
+    bricks.forEach(br=>{
+      if(!br.hit && b.x>br.x && b.x<br.x+br.w && b.y>br.y && b.y<br.y+br.h){
+        br.hit=true;
+        b.dy*=-1;
+        score+=10;
+        brickHitsThisLife++;
+        spawnParticles(b.x,b.y);
+
+        if(brickHitsThisLife===3){
+          spawnBall(b.x,b.y,3,-3);
+          spawnBall(b.x,b.y,-3,-3);
+        }
+      }
+    });
+  });
+
+  particles=particles.filter(p=>p.life-->0);
+  particles.forEach(p=>{p.x+=p.dx;p.y+=p.dy});
+}
+
+/* ------------------ DRAW ------------------ */
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  bricks.forEach(b=>{
+    if(!b.hit){
+      ctx.fillStyle="#4da6ff";
+      ctx.fillRect(b.x,b.y,b.w,b.h);
     }
   });
 
-  // brick collisions
-  for(let b of bricks){ if(b.hit) continue; if(circleRectCollision(ball, b)){
-      const prev = { x: ball.x - ball.speedX, y: ball.y - ball.speedY };
-      if(prev.x < b.x || prev.x > b.x + b.width){ ball.speedX *= -1; }
-      else { ball.speedY *= -1; }
-      b.hit = true; score += 10; playNoise(0.06,0.08);
-    }
-  }
+  drawDJBooth();
+  drawLeg(leftFlipper,true);
+  drawLeg(rightFlipper,false);
+
+  balls.forEach(drawVinyl);
+
+  particles.forEach(p=>{
+    ctx.fillStyle="rgba(255,105,180,0.7)";
+    ctx.fillRect(p.x,p.y,3,3);
+  });
+
+  ctx.fillStyle="#fff";
+  ctx.fillText(`Score ${score}`,10,18);
+  ctx.fillText(`Lives ${lives}`,W-80,18);
 }
 
-function circleRectCollision(c, r){
-  const cx = Math.max(r.x, Math.min(c.x, r.x + r.width));
-  const cy = Math.max(r.y, Math.min(c.y, r.y + r.height));
-  const dx = c.x - cx; const dy = c.y - cy;
-  return (dx*dx + dy*dy) <= (c.radius*c.radius);
-}
-
-function resolveCircleRectCollision(c, r){
-  const prev = { x: c.x - c.speedX, y: c.y - c.speedY };
-  if(prev.x < r.x || prev.x > r.x + r.width){ c.speedX *= -1; }
-  else { c.speedY *= -1; }
-}
-
-function resetGame(){
-  const scaleX = W / baseW; const scaleY = H / baseH;
-  paddle.x = 250 * scaleX; paddle.y = 370 * scaleY; paddle.width = 100 * scaleX; paddle.height = 15 * scaleY; paddle.speed = 5 * Math.max(scaleX, scaleY);
-  leftFlipper.x = 10 * scaleX; leftFlipper.y = 180 * scaleY; leftFlipper.width = 10 * scaleX; leftFlipper.height = 60 * scaleY; leftFlipper.speed = 5 * Math.max(scaleX, scaleY);
-  rightFlipper.x = 580 * scaleX; rightFlipper.y = 180 * scaleY; rightFlipper.width = 10 * scaleX; rightFlipper.height = 60 * scaleY; rightFlipper.speed = 5 * Math.max(scaleX, scaleY);
-  ball.x = (baseW/2) * scaleX; ball.y = (baseH/2) * scaleY; ball.radius = 10 * Math.max(scaleX, scaleY); ball.speedX = 3 * Math.max(scaleX, scaleY); ball.speedY = -3 * Math.max(scaleX, scaleY);
-  brickWidth = 60 * scaleX; brickHeight = 20 * scaleY; brickPadding = 5 * scaleX; brickRows = 4; brickCols = 8;
-  bricks = [];
-  for(let r=0;r<brickRows;r++){
-    for(let c=0;c<brickCols;c++){
-      const x = c*(brickWidth+brickPadding)+35*scaleX;
-      const y = r*(brickHeight+brickPadding)+30*scaleY;
-      bricks.push({ x, y, width:brickWidth, height:brickHeight, hit:false });
-    }
-  }
-  score = 0; lives = 3;
-}
-
-// init
-resetGame();
-resizeCanvas();
-window.addEventListener('resize', resizeCanvas);
-function gameLoop(){ update(); draw(); requestAnimationFrame(gameLoop); }
-requestAnimationFrame(gameLoop);
+/* ------------------ LOOP ------------------ */
+function loop(){update();draw();requestAnimationFrame(loop)}
+loop();
 </script>
 </body>
 </html>
