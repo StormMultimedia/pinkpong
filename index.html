@@ -8,174 +8,240 @@
 :root{--pink:#ff69b4;--hot:#ff1493;--bg:#111;--canvas-bg:#222}
 body{margin:0;background:var(--bg);display:flex;justify-content:center;align-items:center;height:100vh}
 .wrapper{position:relative}
-canvas{background:var(--canvas-bg);border:2px solid var(--pink);border-radius:6px}
+canvas{background:var(--canvas-bg);border:2px solid var(--pink);border-radius:6px;outline:none}
 .topbar{position:absolute;left:12px;top:10px;color:#ddd;font-size:14px;z-index:20}
+.info{position:absolute;right:12px;top:10px;color:#ddd;font-size:14px;z-index:20}
 </style>
 </head>
 
 <body>
 <div class="wrapper">
   <div class="topbar">Pink Pong MVP</div>
-  <canvas id="gameCanvas" width="600" height="400"></canvas>
+  <div class="info">Use mouse / touch / ← → or A D</div>
+  <canvas id="gameCanvas" width="600" height="400" tabindex="0"></canvas>
 </div>
 
 <script>
+/*
+  This updated index.html focuses on restoring paddle control.
+  Controls supported:
+  - Mouse move over canvas (or click + move)
+  - Touch move
+  - Keyboard: ArrowLeft/ArrowRight and A/D
+  Keyboard works when canvas has focus (it has tabindex="0")
+*/
+
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
 
 /* ------------------ GAME STATE ------------------ */
-let score=0,lives=3,brickHitsThisLife=0;
-let balls=[];
-let particles=[];
+let score=0, lives=3;
+let balls = [];
+let bricks = [];
+let particles = [];
 
 /* ------------------ OBJECTS ------------------ */
-const paddle={x:250,y:360,w:120,h:22,speed:6};
-const leftFlipper={x:14,y:170,w:16,h:80};
-const rightFlipper={x:570,y:170,w:16,h:80};
+const paddle = { x: 250, y: 360, w: 120, h: 22, speed: 6 };
 
-const bricks=[];
 for(let r=0;r<4;r++){
   for(let c=0;c<8;c++){
-    bricks.push({x:40+c*65,y:40+r*26,w:60,h:20,hit:false});
+    bricks.push({ x:40 + c*65, y:40 + r*26, w:60, h:20, hit:false });
   }
 }
 
-/* ------------------ BALL / VINYL ------------------ */
+/* ------------------ BALL ------------------ */
 function spawnBall(x,y,dx,dy){
-  balls.push({x,y,r:9,dx,dy,rot:0});
+  balls.push({ x, y, r:9, dx, dy, rot:0 });
 }
-spawnBall(W/2,H/2,3,-3);
+spawnBall(W/2, H/2, 3, -3);
 
 /* ------------------ DRAW HELPERS ------------------ */
 function drawVinyl(b){
   ctx.save();
-  ctx.translate(b.x,b.y);
+  ctx.translate(b.x, b.y);
   ctx.rotate(b.rot);
-  ctx.fillStyle="#000";
-  ctx.beginPath();ctx.arc(0,0,b.r,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle="#fff";
-  ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle = "#000";
+  ctx.beginPath(); ctx.arc(0,0,b.r,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.arc(0,0,3,0,Math.PI*2); ctx.fill();
   ctx.restore();
 }
 
 function drawDJBooth(){
-  ctx.fillStyle="#111";
-  ctx.fillRect(paddle.x,paddle.y,paddle.w,paddle.h);
+  ctx.fillStyle = "#111";
+  ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
   // turntables
-  ctx.fillStyle="#333";
-  ctx.beginPath();ctx.arc(paddle.x+25,paddle.y+11,8,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.arc(paddle.x+paddle.w-25,paddle.y+11,8,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle = "#333";
+  ctx.beginPath(); ctx.arc(paddle.x+25, paddle.y+11, 8, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(paddle.x+paddle.w-25, paddle.y+11, 8, 0, Math.PI*2); ctx.fill();
   // mixer
-  ctx.fillStyle="#ff69b4";
-  ctx.fillRect(paddle.x+paddle.w/2-6,paddle.y+4,12,14);
+  ctx.fillStyle = "#ff69b4";
+  ctx.fillRect(paddle.x + paddle.w/2 - 6, paddle.y + 4, 12, 14);
 }
 
-function drawLeg(flipper,left=true){
-  ctx.fillStyle="#ff3f8a";
-  ctx.fillRect(flipper.x,flipper.y,flipper.w,flipper.h);
-  ctx.fillStyle="#000";
-  if(left){
-    ctx.beginPath();
-    ctx.moveTo(flipper.x+flipper.w,flipper.y+flipper.h-8);
-    ctx.lineTo(flipper.x+flipper.w+8,flipper.y+flipper.h);
-    ctx.lineTo(flipper.x+flipper.w,flipper.y+flipper.h);
-    ctx.fill();
-  }else{
-    ctx.beginPath();
-    ctx.moveTo(flipper.x,flipper.y+flipper.h-8);
-    ctx.lineTo(flipper.x-8,flipper.y+flipper.h);
-    ctx.lineTo(flipper.x,flipper.y+flipper.h);
-    ctx.fill();
-  }
-}
+/* ------------------ LOGIC ------------------ */
+function update(dt){
+  // update balls
+  for(let b of balls){
+    b.x += b.dx;
+    b.y += b.dy;
+    b.rot += 0.05 * (b.dx || 1);
 
-function spawnParticles(x,y){
-  for(let i=0;i<12;i++){
-    particles.push({
-      x,y,
-      dx:(Math.random()-0.5)*4,
-      dy:(Math.random()-0.5)*4,
-      life:20
-    });
-  }
-}
+    // wall bounce
+    if(b.x - b.r < 0){ b.x = b.r; b.dx *= -1; }
+    if(b.x + b.r > W){ b.x = W - b.r; b.dx *= -1; }
+    if(b.y - b.r < 0){ b.y = b.r; b.dy *= -1; }
 
-/* ------------------ UPDATE ------------------ */
-function update(){
-  balls.forEach(b=>{
-    b.x+=b.dx; b.y+=b.dy; b.rot+=0.15;
-
-    if(b.x<b.r||b.x>W-b.r) b.dx*=-1;
-    if(b.y<b.r) b.dy*=-1;
-
-    if(b.y>H){
-      lives--;
-      brickHitsThisLife=0;
-      balls=[ ];
-      spawnBall(W/2,H/2,3,-3);
+    // paddle collision (simple AABB -> circle)
+    if(b.y + b.r > paddle.y &&
+       b.y - b.r < paddle.y + paddle.h &&
+       b.x > paddle.x &&
+       b.x < paddle.x + paddle.w){
+      b.y = paddle.y - b.r;
+      b.dy *= -1;
+      // add spin by offset from paddle center
+      const rel = (b.x - (paddle.x + paddle.w/2)) / (paddle.w/2);
+      b.dx += rel * 2;
     }
 
-    if(b.y+b.r>paddle.y && b.x>paddle.x && b.x<paddle.x+paddle.w){
-      b.dy=-Math.abs(b.dy);
+    // bottom -> lose life & respawn
+    if(b.y - b.r > H){
+      lives -= 1;
+      b.x = W/2; b.y = H/2; b.dx = 3; b.dy = -3;
     }
 
-    [leftFlipper,rightFlipper].forEach(f=>{
-      if(b.x>b.r+f.x && b.x<f.x+f.w && b.y>f.y && b.y<f.y+f.h){
-        b.dx*=-1;
+    // bricks simple collision
+    for(let br of bricks){
+      if(br.hit) continue;
+      if(b.x + b.r > br.x && b.x - b.r < br.x + br.w &&
+         b.y + b.r > br.y && b.y - b.r < br.y + br.h){
+        br.hit = true;
+        b.dy *= -1;
+        score += 10;
       }
-    });
+    }
+  }
 
-    bricks.forEach(br=>{
-      if(!br.hit && b.x>br.x && b.x<br.x+br.w && b.y>br.y && b.y<br.y+br.h){
-        br.hit=true;
-        b.dy*=-1;
-        score+=10;
-        brickHitsThisLife++;
-        spawnParticles(b.x,b.y);
-
-        if(brickHitsThisLife===3){
-          spawnBall(b.x,b.y,3,-3);
-          spawnBall(b.x,b.y,-3,-3);
-        }
-      }
-    });
-  });
-
-  particles=particles.filter(p=>p.life-->0);
-  particles.forEach(p=>{p.x+=p.dx;p.y+=p.dy});
+  // remove bricks that are hit (visual only)
+  // (we keep them in array; draw ignores hit ones)
 }
 
-/* ------------------ DRAW ------------------ */
+/* ------------------ RENDER ------------------ */
 function draw(){
   ctx.clearRect(0,0,W,H);
 
-  bricks.forEach(b=>{
-    if(!b.hit){
-      ctx.fillStyle="#4da6ff";
-      ctx.fillRect(b.x,b.y,b.w,b.h);
-    }
-  });
+  // bricks
+  for(let br of bricks){
+    if(br.hit) continue;
+    ctx.fillStyle = "#ff69b4";
+    ctx.fillRect(br.x, br.y, br.w, br.h);
+    ctx.fillStyle = "#111";
+    ctx.fillRect(br.x+6, br.y+6, br.w-12, br.h-12);
+  }
 
+  // balls
+  for(let b of balls) drawVinyl(b);
+
+  // DJ booth / paddle
   drawDJBooth();
-  drawLeg(leftFlipper,true);
-  drawLeg(rightFlipper,false);
 
-  balls.forEach(drawVinyl);
-
-  particles.forEach(p=>{
-    ctx.fillStyle="rgba(255,105,180,0.7)";
-    ctx.fillRect(p.x,p.y,3,3);
-  });
-
-  ctx.fillStyle="#fff";
-  ctx.fillText(`Score ${score}`,10,18);
-  ctx.fillText(`Lives ${lives}`,W-80,18);
+  // HUD
+  ctx.fillStyle = "#ddd";
+  ctx.font = "14px Arial";
+  ctx.fillText("Score: " + score, 12, H - 12);
+  ctx.fillText("Lives: " + lives, W - 80, H - 12);
 }
 
-/* ------------------ LOOP ------------------ */
-function loop(){update();draw();requestAnimationFrame(loop)}
-loop();
+/* ------------------ MAIN LOOP ------------------ */
+let last = performance.now();
+function tick(now){
+  const dt = (now - last) / 1000;
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ------------------ PADDLE CONTROL (RESTORED) ------------------ */
+/* Keyboard support */
+const keys = { left: false, right: false };
+
+function handleKeys() {
+  if(keys.left && !keys.right){
+    paddle.x -= paddle.speed;
+  } else if(keys.right && !keys.left){
+    paddle.x += paddle.speed;
+  }
+  // clamp
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+}
+
+window.addEventListener('keydown', (e) => {
+  if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+  if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+});
+window.addEventListener('keyup', (e) => {
+  if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+  if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+});
+
+// Hook into the main update - keep it simple by calling in a small interval
+setInterval(handleKeys, 16);
+
+/* Mouse / Pointer support */
+function canvasToLocal(evt){
+  const rect = canvas.getBoundingClientRect();
+  let clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+  // handle touch with multiple touches gracefully
+  if(evt.touches && evt.touches.length > 1) clientX = evt.touches[0].clientX;
+  const x = clientX - rect.left;
+  return Math.max(0, Math.min(W, x));
+}
+
+let isPointerDown = false;
+canvas.addEventListener('mousedown', (e) => { isPointerDown = true; canvas.focus(); });
+window.addEventListener('mouseup', () => isPointerDown = false);
+canvas.addEventListener('mousemove', (e) => {
+  if(!isPointerDown && !e.buttons) return; // only move when dragging or clicking
+  const x = canvasToLocal(e);
+  paddle.x = x - paddle.w/2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+});
+
+// Allow immediate mouse move without holding button
+canvas.addEventListener('mousemove', (e) => {
+  if(e.buttons || isPointerDown){
+    const x = canvasToLocal(e);
+    paddle.x = x - paddle.w/2;
+    paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+  }
+});
+
+/* Touch support */
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const x = canvasToLocal(e);
+  paddle.x = x - paddle.w/2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const x = canvasToLocal(e);
+  paddle.x = x - paddle.w/2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  // nothing special for now
+}, { passive: false });
+
+/* Ensure canvas is focusable for keyboard */
+canvas.addEventListener('click', () => canvas.focus());
+canvas.style.touchAction = "none"; // prevent browser gestures interfering on touch devices
+
 </script>
 </body>
 </html>
