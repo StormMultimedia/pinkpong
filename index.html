@@ -82,8 +82,53 @@ function spawnParticles(x,y,color,count=12){
   }
 }
 
+/* ------------------ AUDIO (WebAudio SFX) ------------------ */
+let audioCtx = null;
+function ensureAudioUnlocked(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  // Try to resume immediately; browsers require a user gesture but we'll also
+  // attach a one-time pointerdown listener to ensure resume on the first click/tap.
+  if(audioCtx.state === 'suspended'){
+    const resume = () => { audioCtx.resume().catch(()=>{}); window.removeEventListener('pointerdown', resume); };
+    window.addEventListener('pointerdown', resume, { once: true });
+  }
+}
+
+function playFlipperSound(){
+  ensureAudioUnlocked();
+  if(!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'square';
+  o.frequency.setValueAtTime(700 + Math.random()*200, now);
+  g.gain.setValueAtTime(0.12, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(now);
+  o.stop(now + 0.09);
+}
+
+function playBrickSound(){
+  ensureAudioUnlocked();
+  if(!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const o1 = audioCtx.createOscillator();
+  const o2 = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o1.type = 'triangle'; o1.frequency.setValueAtTime(520 + Math.random()*120, now);
+  o2.type = 'sawtooth'; o2.frequency.setValueAtTime(360 + Math.random()*80, now);
+  g.gain.setValueAtTime(0.15, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+  o1.connect(g); o2.connect(g); g.connect(audioCtx.destination);
+  o1.start(now); o2.start(now);
+  o1.stop(now + 0.23); o2.stop(now + 0.23);
+}
+
 function brickBreakFX(x,y){
   spawnParticles(x,y, '#ff1493', 18);
+  try{ playBrickSound(); }catch(e){}
 }
 
 /* ------------------ DRAW HELPERS ------------------ */
@@ -224,6 +269,7 @@ canvas.addEventListener('touchend', (e) => {
 
 function triggerFlipperTap(f){
   f.target = f.maxAngle;
+  try{ playFlipperSound(); }catch(e){}
   setTimeout(()=>{ f.target = 0; }, 160);
 }
 
