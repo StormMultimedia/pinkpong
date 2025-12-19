@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Pura Power Pink Pong MVP</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<style>
+:root{--pink:#ff69b4;--hot:#ff1493;--bg:#111;--canvas-bg:#222}
+body{margin:0;background:var(--bg);display:flex;justify-content:center;align-items:center;height:100vh}
+.wrapper{position:relative}
+canvas{background:var(--canvas-bg);border:2px solid var(--pink);border-radius:6px;outline:none}
+.topbar{position:absolute;left:12px;top:10px;color:#ddd;font-size:14px;z-index:20}
+.info{position:absolute;right:12px;top:10px;color:#ddd;font-size:13px;z-index:20;text-align:right}
+</style>
+</head>
+
+<body>
+<div class="wrapper">
+  <div class="topbar">Pink Pong MVP</div>
+  <div class="info">Controls: mouse / touch / ← → or A D (paddle) · Z (left flipper) · M (right flipper)</div>
+  <canvas id="gameCanvas" width="600" height="400" tabindex="0"></canvas>
+</div>
+
+<script>
+/*
+  Pura Power Pink Pong MVP
+  - Paddle + flippers (Z / M) + brick particle FX
+  - Input:
+    * Keyboard: ArrowLeft/ArrowRight or A/D move paddle; Z/M trigger flippers (when canvas focused)
+    * Mouse: click/drag to move paddle; click in edge zones triggers flippers
+    * Touch: drag to move paddle; tap in edge zones triggers flippers
+  - Physics stability:
+    * dt-based movement (dx/dy treated as pixels-per-60fps)
+    * clamp dt in tick() to prevent teleporting on tab-switch
+    * clamp MAX_BALL_SPEED to avoid runaway velocity
+    * optional micro anti-jitter: flipper-hit cooldown + extra separation nudge
+*/
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+/* ------------------ GAME STATE ------------------ */
+let score = 0, lives = 3;
+let balls = [];
+let bricks = [];
+let particles = [];
+
+/* ------------------ OBJECTS ------------------ */
+const paddle = { x: 250, y: 360, w: 120, h: 22, speed: 6 };
+
+// Flippers (vertical "legs" on left and right)
+const leftFlipper  = { x: 14,  y: 170, w: 16, h: 80, angle: 0, target: 0, maxAngle: -0.9 };
+const rightFlipper = { x: 570, y: 170, w: 16, h: 80, angle: 0, target: 0, maxAngle:  0.9 };
+
+// Stability tuning
+const MAX_BALL_SPEED = 12;          // clamp ball speed (dx/dy magnitude)
+const EDGE_ZONE = 120;              // edge zone width for flipper taps
+const MAX_DT = 1/30;                // dt clamp (seconds)
+const FLIPPER_NUDGE = 3;            // push ball out after flipper collision (reduce buzz)
+const FLIPPER_HIT_COOLDOWN = 0.05;  // seconds per ball (reduce repeated consecutive hits)
+
+/* ------------------ BRICKS ------------------ */
+for(let r=0;r<4;r++){
+  for(let c=0;c<8;c++){
+    bricks.push({ x:40 + c*65, y:40 + r*26, w:60, h:20, hit:false });
+  }
+}
+
+/* ------------------ BALL ------------------ */
+function spawnBall(x,y,dx,dy){
+  balls.push({
+    x, y, r: 9,
+    dx, dy,
+    rot: 0,
+    flipperCooldown: 0
+  });
+}
+spawnBall(W/2, H/2, 3, -3);
+
+/* ------------------ PARTICLES ------------------ */
+function spawnParticles(x,y,color,count=12){
+  for(let i=0;i<count;i++){
+    const speed = 1 + Math.random()*2;
+    const angle = Math.random()*Math.PI*2;
+    particles.push({
+      x, y,
+      dx: Math.cos(angle)*speed,
+      dy: Math.sin(angle)*speed - 1.2,
+      life: 0.8 + Math.random()*0.4,
+      age: 0,
+      color
+    });
+  }
+}
+
+/* ------------------ DRAW HELPERS ------------------ */
+function drawVinyl(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.rotate(b.rot);
+  ctx.fillStyle="#000";
+  ctx.beginPath(); ctx.arc(0,0,b.r,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="#fff";
+  ctx.beginPath(); ctx.arc(0,0,3,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawDJBooth(){
+  ctx.fillStyle="#111";
+  ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+  // turntables
+  ctx.fillStyle="#333";
+  ctx.beginPath(); ctx.arc(paddle.x+25, paddle.y+11, 8, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(paddle.x+paddle.w-25, paddle.y+11, 8, 0, Math.PI*2); ctx.fill();
+  // mixer
+  ctx.fillStyle="#ff69b4";
+  ctx.fillRect(paddle.x + paddle.w/2 - 6, paddle.y + 4, 12, 14);
+}
+
+function drawFlipper(f, left=true){
+  ctx.save();
+  const pivotX = f.x + f.w/2;
+  const pivotY = f.y + 10; // pivot near top
+  ctx.translate(pivotX, pivotY);
+  ctx.rotate(f.angle);
+  ctx.fillStyle = "#ff3f8a";
+  ctx.fillRect(-f.w/2, 0, f.w, f.h);
+  // dark edge
+  ctx.fillStyle = "#000";
+  ctx.fillRect(-f.w/2 + (left ? f.w-4 : 0), f.h - 12, 4, 6);
+  ctx.restore();
+}
+
+/* ------------------ UTILS: point-to-segment distance ------------------ */
+function pointToSegmentDistance(px,py, x1,y1,x2,y2){
+  const vx = x2 - x1, vy = y2 - y1;
+  const wx = px - x1, wy = py - y1;
+  const c = (vx*wx + vy*wy) / (vx*vx + vy*vy);
+  const t = Math.max(0, Math.min(1, c));
+  const cx = x1 + vx * t, cy = y1 + vy * t;
+  const dx = px - cx, dy = py - cy;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+/* ------------------ INPUT ------------------ */
+const keys = { left:false, right:false, z:false, m:false };
+
+function handleKeys(dt){
+  const step = paddle.speed * 60 * dt;
+  if(keys.left && !keys.right) paddle.x -= step;
+  else if(keys.right && !keys.left) paddle.x += step;
+
+  leftFlipper.target  = keys.z ? leftFlipper.maxAngle : 0;
+  rightFlipper.target = keys.m ? rightFlipper.maxAngle : 0;
+
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+}
+
+canvas.addEventListener('keydown', (e) => {
+  // prevent page scrolling with arrows
+  if(e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.preventDefault();
+
+  if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+  if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+  if(e.key === 'z' || e.key === 'Z') keys.z = true;
+  if(e.key === 'm' || e.key === 'M') keys.m = true;
+});
+canvas.addEventListener('keyup', (e) => {
+  if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+  if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+  if(e.key === 'z' || e.key === 'Z') keys.z = false;
+  if(e.key === 'm' || e.key === 'M') keys.m = false;
+});
+
+function canvasToLocal(evt){
+  const rect = canvas.getBoundingClientRect();
+  let clientX;
+  if(evt.touches) clientX = evt.touches[0].clientX;
+  else clientX = evt.clientX;
+  return Math.max(0, Math.min(W, clientX - rect.left));
+}
+
+let isPointerDown = false;
+
+canvas.addEventListener('mousedown', (e) => {
+  isPointerDown = true;
+  canvas.focus();
+  const x = canvasToLocal(e);
+
+  // move paddle immediately
+  paddle.x = x - paddle.w/2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+
+  // flipper tap only near edges
+  if(x < EDGE_ZONE) triggerFlipperTap(leftFlipper);
+  else if(x > W - EDGE_ZONE) triggerFlipperTap(rightFlipper);
+});
+window.addEventListener('mouseup', () => isPointerDown = false);
+canvas.addEventListener('mouseleave', () => isPointerDown = false);
+
+canvas.addEventListener('mousemove', (e) => {
+  const down = isPointerDown || !!e.buttons;
+  if(!down) return;
+  const x = canvasToLocal(e);
+  paddle.x = x - paddle.w/2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+});
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const x = canvasToLocal(e);
+  paddle.x = x - paddle.w/2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+
+  if(x < EDGE_ZONE) triggerFlipperTap(leftFlipper);
+  else if(x > W - EDGE_ZONE) triggerFlipperTap(rightFlipper);
+}, { passive:false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const x = canvasToLocal(e);
+  paddle.x = x - paddle.w/2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+}, { passive:false });
+
+function triggerFlipperTap(f){
+  f.target = f.maxAngle;
+  setTimeout(() => { f.target = 0; }, 160);
+}
+
+/* Ensure canvas can receive keyboard input */
+canvas.addEventListener('click', () => canvas.focus());
+canvas.style.touchAction = "none";
+
+/* ------------------ COLLISIONS ------------------ */
+function handleFlipperCollision(b, f, dt){
+  // cooldown: prevents repeated micro-collisions frame-to-frame
+  if(b.flipperCooldown > 0) return;
+
+  // pivot and end points for current rotation
+  const pivotX = f.x + f.w/2;
+  const pivotY = f.y + 10;
+  const len = f.h;
+
+  const sx = Math.sin(f.angle) * len;
+  const sy = Math.cos(f.angle) * len;
+
+  const x1 = pivotX, y1 = pivotY;
+  const x2 = pivotX + sx, y2 = pivotY + sy;
+
+  const dist = pointToSegmentDistance(b.x, b.y, x1, y1, x2, y2);
+  const hitThreshold = b.r + 6;
+
+  if(dist < hitThreshold){
+    // nearest point on segment
+    const vx = x2 - x1, vy = y2 - y1;
+    const wx = b.x - x1, wy = b.y - y1;
+    const c = (vx*wx + vy*wy) / (vx*vx + vy*vy);
+    const t = Math.max(0, Math.min(1, c));
+    const cx = x1 + vx * t, cy = y1 + vy * t;
+
+    // normal from segment to ball
+    const nx = (b.x - cx), ny = (b.y - cy);
+    const nlen = Math.sqrt(nx*nx + ny*ny) || 1;
+    const nxn = nx / nlen, nyn = ny / nlen;
+
+    // reflect velocity about normal
+    const dot = b.dx * nxn + b.dy * nyn;
+    b.dx = b.dx - 2 * dot * nxn;
+    b.dy = b.dy - 2 * dot * nyn;
+
+    // bias bounce outward + add flipper "kick"
+    b.dx += Math.sin(f.angle) * 2;
+    b.dy -= Math.abs(Math.cos(f.angle)) * 2;
+
+    // nudge ball further out to reduce repeated collisions
+    b.x = cx + nxn * (hitThreshold + FLIPPER_NUDGE);
+    b.y = cy + nyn * (hitThreshold + FLIPPER_NUDGE);
+
+    // cooldown and effect
+    b.flipperCooldown = FLIPPER_HIT_COOLDOWN;
+    spawnParticles(b.x, b.y, '#ff69b4', 6);
+  }
+}
+
+function brickBreakFX(x,y){
+  spawnParticles(x,y, '#ff1493', 18);
+}
+
+/* ------------------ LOGIC ------------------ */
+function update(dt){
+  handleKeys(dt);
+
+  // update flipper angles toward their targets
+  const speed = 12;
+  leftFlipper.angle  += (leftFlipper.target  - leftFlipper.angle)  * Math.min(1, speed * dt);
+  rightFlipper.angle += (rightFlipper.target - rightFlipper.angle) * Math.min(1, speed * dt);
+
+  for(const b of balls){
+    // cooldown timer
+    if(b.flipperCooldown > 0) b.flipperCooldown = Math.max(0, b.flipperCooldown - dt);
+
+    // movement (dx/dy treated as pixels-per-60fps)
+    b.x += b.dx * 60 * dt;
+    b.y += b.dy * 60 * dt;
+    b.rot += 0.05 * (b.dx || 1) * 60 * dt;
+
+    // walls
+    if(b.x - b.r < 0){ b.x = b.r; b.dx *= -1; }
+    if(b.x + b.r > W){ b.x = W - b.r; b.dx *= -1; }
+    if(b.y - b.r < 0){ b.y = b.r; b.dy *= -1; }
+
+    // paddle collision
+    if(
+      b.y + b.r > paddle.y &&
+      b.y - b.r < paddle.y + paddle.h &&
+      b.x > paddle.x &&
+      b.x < paddle.x + paddle.w
+    ){
+      b.y = paddle.y - b.r;
+      b.dy = -Math.abs(b.dy);
+
+      // spin from where it hits
+      const rel = (b.x - (paddle.x + paddle.w/2)) / (paddle.w/2);
+      b.dx += rel * 2;
+    }
+
+    // flippers
+    handleFlipperCollision(b, leftFlipper, dt);
+    handleFlipperCollision(b, rightFlipper, dt);
+
+    // bricks
+    for(const br of bricks){
+      if(br.hit) continue;
+      if(
+        b.x + b.r > br.x && b.x - b.r < br.x + br.w &&
+        b.y + b.r > br.y && b.y - b.r < br.y + br.h
+      ){
+        br.hit = true;
+        b.dy *= -1;
+        score += 10;
+        brickBreakFX(br.x + br.w/2, br.y + br.h/2);
+      }
+    }
+
+    // bottom out
+    if(b.y - b.r > H){
+      lives -= 1;
+      b.x = W/2; b.y = H/2; b.dx = 3; b.dy = -3;
+      b.flipperCooldown = 0;
+    }
+
+    // clamp speed
+    const sp = Math.hypot(b.dx, b.dy);
+    if(sp > MAX_BALL_SPEED){
+      const s = MAX_BALL_SPEED / sp;
+      b.dx *= s; b.dy *= s;
+    }
+  }
+
+  // particles
+  for(const p of particles){
+    p.age += dt;
+    p.x += p.dx * 60 * dt;
+    p.y += p.dy * 60 * dt;
+    p.dy += 60 * dt * 0.06;
+  }
+  particles = particles.filter(p => p.age < p.life);
+
+  // final clamp
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+}
+
+/* ------------------ RENDER ------------------ */
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  // bricks
+  for(const br of bricks){
+    if(br.hit) continue;
+    ctx.fillStyle = "#ff69b4";
+    ctx.fillRect(br.x, br.y, br.w, br.h);
+    ctx.fillStyle = "#111";
+    ctx.fillRect(br.x+6, br.y+6, br.w-12, br.h-12);
+  }
+
+  // balls
+  for(const b of balls) drawVinyl(b);
+
+  // paddle / DJ booth
+  drawDJBooth();
+
+  // flippers
+  drawFlipper(leftFlipper, true);
+  drawFlipper(rightFlipper, false);
+
+  // particles
+  for(const p of particles){
+    const t = 1 - (p.age / p.life);
+    ctx.globalAlpha = Math.max(0, Math.min(1, t));
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.2, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // HUD
+  ctx.fillStyle = "#ddd";
+  ctx.font = "14px Arial";
+  ctx.fillText("Score: " + score, 12, H - 12);
+  ctx.fillText("Lives: " + lives, W - 80, H - 12);
+}
+
+/* ------------------ MAIN LOOP ------------------ */
+let last = performance.now();
+function tick(now){
+  const rawDt = (now - last) / 1000;
+  last = now;
+
+  // dt clamp prevents huge sim steps after tab-switch / frame stalls
+  const dt = Math.min(rawDt, MAX_DT);
+
+  update(dt);
+  draw();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+</script>
+</body>
+</html>
